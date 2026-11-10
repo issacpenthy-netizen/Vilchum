@@ -1,0 +1,65 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String        @id @default(cuid())
+  phone     String?       @unique
+  email     String?       @unique
+  googleSub String?       @unique
+  recipientName String?
+  contactPhone  String?
+  addressLine   String?
+  khan          String?
+  sangkat       String?
+  landmark      String?
+  createdAt DateTime      @default(now())
+  scans     Scan[]
+  ledger    LedgerEntry[]
+  payouts   Payout[]
+}
+
+model Scan {
+  id         String     @id @default(cuid())
+  userId     String
+  user       User       @relation(fields: [userId], references: [id])
+  imagePath  String
+  imageHash  String
+  cans       Int
+  bottles    Int
+  confidence Float
+  points     Int
+  status     String     @default("PENDING")
+  reason     String?
+  createdAt  DateTime   @default(now())
+  @@index([userId, createdAt])
+}
+
+model LedgerEntry {
+  id        String     @id @default(cuid())
+  userId    String
+  user      User       @relation(fields: [userId], references: [id])
+  delta     Int
+  type      String
+  refId     String
+  createdAt DateTime   @default(now())
+  @@index([userId, createdAt])
+}
+
+model Payout {
+  id          String       @id @default(cuid())
+  userId      String
+  user        User         @relation(fields: [userId], references: [id])
+  amount      Int
+  method      String
+  account     String
+  status      String       @default("PROCESSING")
+  providerRef String?
+  createdAt   DateTime     @default(now())
+  @@index([userId, createdAt])
+}
