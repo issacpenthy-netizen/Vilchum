@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { currentUser } from "@/lib/auth";
-import { pickup, rules } from "@/config";
+import { pickup } from "@/config";
+import { CASHOUT_FEE, MIN_CASHOUT } from "@/lib/money";
 import { z } from "zod";
 
 const addressSchema = z.object({
@@ -16,7 +17,11 @@ const addressSchema = z.object({
 export async function GET() {
   const user = await currentUser();
   if (!user) return NextResponse.json({ error: "Sign in to continue." }, { status: 401 });
-  const entries = await db.ledgerEntry.aggregate({ where: { userId: user.id }, _sum: { delta: true } });
+  // Balance is ledger-only (verified money). Pending estimates are reported separately and are never spendable.
+  const [entries, pending] = await Promise.all([
+    db.ledgerEntry.aggregate({ where: { userId: user.id }, _sum: { delta: true } }),
+    db.scan.aggregate({ where: { userId: user.id, status: "ESTIMATED" }, _sum: { estimatedPoints: true }, _count: true }),
+  ]);
   const balance = entries._sum.delta ?? 0;
   return NextResponse.json({
     user: { id: user.id, phone: user.phone, email: user.email },
@@ -30,8 +35,11 @@ export async function GET() {
       landmark: user.landmark ?? "",
     },
     balance,
-    minimum: rules.minimumCashout,
-    progress: Math.min(100, balance / rules.minimumCashout * 100),
+    pendingEstimate: pending._sum.estimatedPoints ?? 0,
+    pendingScans: pending._count,
+    minimum: MIN_CASHOUT,
+    fee: CASHOUT_FEE,
+    progress: Math.min(100, balance / MIN_CASHOUT * 100),
   });
 }
 

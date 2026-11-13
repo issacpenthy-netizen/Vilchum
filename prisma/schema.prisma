@@ -22,22 +22,46 @@ model User {
   scans     Scan[]
   ledger    LedgerEntry[]
   payouts   Payout[]
+  receipts  Receipt[]
 }
 
+// Two-phase crediting: a scan is an ESTIMATED photo count that never touches the ledger.
+// Only a driver's counted items (VERIFIED) create a ledger entry and a receipt.
 model Scan {
-  id         String     @id @default(cuid())
-  userId     String
-  user       User       @relation(fields: [userId], references: [id])
-  imagePath  String
-  imageHash  String
-  cans       Int
-  bottles    Int
-  confidence Float
-  points     Int
-  status     String     @default("PENDING")
-  reason     String?
-  createdAt  DateTime   @default(now())
+  id              String     @id @default(cuid())
+  userId          String
+  user            User       @relation(fields: [userId], references: [id])
+  imagePath       String
+  imageHash       String
+  cans            Int        // estimated from the photo
+  bottles         Int        // estimated from the photo
+  confidence      Float
+  estimatedPoints Int        @map("points")
+  status          String     @default("ESTIMATED") // ESTIMATED | VERIFIED | REJECTED
+  reason          String?
+  verifiedCans    Int?
+  verifiedBottles Int?
+  verifiedPoints  Int?
+  verifiedAt      DateTime?
+  createdAt       DateTime   @default(now())
   @@index([userId, createdAt])
+  @@index([status, createdAt])
+}
+
+// One receipt per money transition, written in the same transaction as its ledger entry.
+model Receipt {
+  id           String   @id @default(cuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id])
+  kind         String   // SCAN_VERIFIED | CASHOUT_REQUESTED | CASHOUT_PAID | CASHOUT_REFUNDED
+  amount       Int      // KHR, always positive
+  delta        Int      // effect on the balance: +credit, -debit, 0 for a settlement
+  balanceAfter Int
+  refId        String   // Scan or Payout id
+  details      String   // JSON snapshot shown on the receipt
+  createdAt    DateTime @default(now())
+  @@index([userId, createdAt])
+  @@index([refId])
 }
 
 model LedgerEntry {
@@ -58,8 +82,8 @@ model Payout {
   amount      Int
   method      String
   account     String
-  status      String       @default("PROCESSING")
-  providerRef String?
+  status      String       @default("REQUESTED") // REQUESTED | PAID | FAILED (rail stubbed in v1: paid manually)
+  providerRef String?      // bank transfer reference entered when an admin marks it paid
   createdAt   DateTime     @default(now())
   @@index([userId, createdAt])
 }

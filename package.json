@@ -7,7 +7,8 @@
     "build": "prisma generate && next build",
     "start": "next start",
     "postinstall": "prisma generate",
-    "db:seed": "node prisma/seed.cjs"
+    "db:seed": "node prisma/seed.cjs",
+    "test": "node --import tsx --test \"src/**/*.test.ts\""
   },
   "prisma": {
     "seed": "node prisma/seed.cjs"

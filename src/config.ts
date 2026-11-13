@@ -1,7 +1,5 @@
+// Money rules (rates, minimum, fee, rounding) live in src/lib/money.ts.
 export const rules = {
-  rates: { cans: 3000, bottles: 1000 },
-  weightGrams: { cans: 15, bottles: 20 },
-  minimumCashout: 5000,
   maxScansPerDay: 10,
   confidenceThreshold: 0.72,
 } as const;
@@ -25,12 +23,3 @@ export const pickup = {
     "Kamboul",
   ],
 } as const;
-
-export function estimate(cans: number, bottles: number) {
-  const canKg = cans * rules.weightGrams.cans / 1000;
-  const bottleKg = bottles * rules.weightGrams.bottles / 1000;
-  return {
-    kg: canKg + bottleKg,
-    points: Math.round(canKg * rules.rates.cans + bottleKg * rules.rates.bottles),
-  };
-}

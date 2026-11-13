@@ -6,22 +6,24 @@ import path from "node:path";
 import sharp from "sharp";
 import { db } from "@/lib/db";
 import { currentUser } from "@/lib/auth";
-import { rules, estimate } from "@/config";
+import { rules } from "@/config";
+import { estimate } from "@/lib/money";
+import { publicReceipt } from "@/lib/ledger";
 import { verifyImage } from "@/lib/verify-image";
 const formSchema = z.object({ image: z.instanceof(File).refine((file) => file.size > 0 && file.size <= 12 * 1024 * 1024, "Choose an image under 12 MB.").refine((file) => ["image/jpeg", "image/png", "image/webp"].includes(file.type), "Use a JPEG, PNG or WebP photo.") });
 export async function GET() {
   const user = await currentUser();
   if (!user) return NextResponse.json({ error: "Sign in to view activity." }, { status: 401 });
   const [scans, payouts] = await Promise.all([
-    db.scan.findMany({ where: { userId: user.id }, orderBy: { createdAt: "desc" }, take: 10, select: { id: true, cans: true, bottles: true, points: true, status: true, reason: true, createdAt: true } }),
+    db.scan.findMany({ where: { userId: user.id }, orderBy: { createdAt: "desc" }, take: 10, select: { id: true, cans: true, bottles: true, estimatedPoints: true, verifiedCans: true, verifiedBottles: true, verifiedPoints: true, status: true, reason: true, createdAt: true } }),
     db.payout.findMany({ where: { userId: user.id }, orderBy: { createdAt: "desc" }, take: 10, select: { id: true, amount: true, method: true, status: true, createdAt: true } }),
   ]);
-  const scanLedger = scans.length ? await db.ledgerEntry.findMany({ where: { refId: { in: scans.map((scan) => scan.id) } }, select: { refId: true, delta: true } }) : [];
-  const credited = new Map<string, number>();
-  for (const entry of scanLedger) credited.set(entry.refId, (credited.get(entry.refId) ?? 0) + entry.delta);
+  const refIds = [...scans.map((scan) => scan.id), ...payouts.map((payout) => payout.id)];
+  const receipts = refIds.length ? await db.receipt.findMany({ where: { userId: user.id, refId: { in: refIds } }, orderBy: { createdAt: "asc" } }) : [];
+  const receiptsFor = (refId: string) => receipts.filter((receipt) => receipt.refId === refId).map(publicReceipt);
   return NextResponse.json({ activity: [
-    ...scans.map((scan) => ({ ...scan, points: Math.max(0, credited.get(scan.id) ?? 0), kind: "SCAN" as const })),
-    ...payouts.map((payout) => ({ ...payout, kind: "CASHOUT" as const })),
+    ...scans.map((scan) => ({ ...scan, kind: "SCAN" as const, receipts: receiptsFor(scan.id) })),
+    ...payouts.map((payout) => ({ ...payout, kind: "CASHOUT" as const, receipts: receiptsFor(payout.id) })),
   ].sort((left, right) => right.createdAt.getTime() - left.createdAt.getTime()).slice(0, 10) });
 }
 export async function POST(request: Request) {
@@ -49,7 +51,9 @@ export async function POST(request: Request) {
   catch (error) { return NextResponse.json({ error: error instanceof Error ? error.message : "Photo verification failed. Try a clearer photo." }, { status: 422 }); }
   if (checked.result.confidence < rules.confidenceThreshold) return NextResponse.json({ error: "We couldn’t confidently verify this photo. Retake it with the items clearly visible." }, { status: 422 });
   if (checked.result.cans + checked.result.bottles < 1) return NextResponse.json({ error: checked.result.issues[0] ?? "No cans or water bottles were found. Try another photo." }, { status: 422 });
-  const { points } = estimate(checked.result.cans, checked.result.bottles);
+  // Phase 1 only: the photo gives an unrounded estimate. It is stored on the scan and never
+  // written to the ledger; a driver's count at pickup is what credits the balance.
+  const estimated = estimate(checked.result.cans, checked.result.bottles);
   const dir = path.join(process.cwd(), "uploads"); await mkdir(dir, { recursive: true });
   const imagePath = path.join(dir, `${randomUUID()}.jpg`);
   await writeFile(imagePath, normalized);
@@ -58,11 +62,10 @@ export async function POST(request: Request) {
       if (await tx.scan.count({ where: { userId: user.id, createdAt: { gte: today } } }) >= rules.maxScansPerDay) throw new Error("DAILY_LIMIT");
       const hashes = await tx.scan.findMany({ select: { imageHash: true } });
       if (hashes.some((prior) => prior.imageHash.length === 64 && distance(prior.imageHash, hash) <= 5)) throw new Error("DUPLICATE_PHOTO");
-      const record = await tx.scan.create({ data: { userId: user.id, imagePath, imageHash: hash, cans: checked.result.cans, bottles: checked.result.bottles, confidence: checked.result.confidence, points, status: "APPROVED" } });
-      await tx.ledgerEntry.create({ data: { userId: user.id, delta: points, type: "SCAN", refId: record.id } });
+      const record = await tx.scan.create({ data: { userId: user.id, imagePath, imageHash: hash, cans: checked.result.cans, bottles: checked.result.bottles, confidence: checked.result.confidence, estimatedPoints: estimated.points, status: "ESTIMATED" } });
       return record;
     });
-    return NextResponse.json({ scan: { id: scan.id, cans: scan.cans, bottles: scan.bottles, points: scan.points, kg: estimate(scan.cans, scan.bottles).kg, status: scan.status }, verifier: checked.mode });
+    return NextResponse.json({ scan: { id: scan.id, cans: scan.cans, bottles: scan.bottles, estimatedPoints: scan.estimatedPoints, kg: estimated.kg, status: scan.status }, verifier: checked.mode });
   } catch (error) {
     await unlink(imagePath).catch(() => {});
     if (error instanceof Error && error.message === "DAILY_LIMIT") return NextResponse.json({ error: "You’ve reached today’s 10 photo limit. Please try again tomorrow." }, { status: 429 });
