@@ -45,6 +45,24 @@ test("production refuses localhost or plain-http OAuth redirects", () => {
   assert.deepEqual(checkEnv({ ...strong, GOOGLE_REDIRECT_URI: "https://vilchum.example/api/auth/google/callback" }, "production").errors, []);
 });
 
+test("the YOLO estimator replaces the Gemini key requirement", () => {
+  const yolo = { ...strong, GEMINI_API_KEY: "", ESTIMATOR_URL: "https://detect.vilchum.example", ESTIMATOR_API_KEY: "k".repeat(40) };
+  assert.deepEqual(checkEnv(yolo, "production").errors, []);
+  assert.ok(checkEnv({ ...strong, GEMINI_API_KEY: "" }, "production").errors.some((message) => message.includes("ESTIMATOR_URL or GEMINI_API_KEY")));
+});
+
+test("production refuses an insecure or keyless estimator", () => {
+  const base = { ...strong, ESTIMATOR_API_KEY: "k".repeat(40) };
+  for (const ESTIMATOR_URL of ["http://detect.vilchum.example", "https://localhost:8000", "not a url"]) {
+    assert.ok(checkEnv({ ...base, ESTIMATOR_URL }, "production").errors.some((message) => message.includes("ESTIMATOR_URL")), `expected an error for ${ESTIMATOR_URL}`);
+  }
+  for (const ESTIMATOR_API_KEY of [undefined, "short"]) {
+    assert.ok(checkEnv({ ...strong, ESTIMATOR_URL: "https://detect.vilchum.example", ESTIMATOR_API_KEY }, "production").errors.some((message) => message.includes("ESTIMATOR_API_KEY")));
+  }
+  // A local service over http is fine in development.
+  assert.deepEqual(checkEnv({ ...base, ESTIMATOR_URL: "http://127.0.0.1:8000" }, "development").errors, []);
+});
+
 test("development keeps working with demo settings but warns", () => {
   const result = checkEnv({ DATABASE_URL: "file:./dev.db", SESSION_SECRET: "replace-with-a-long-random-value", ADMIN_PASSWORD: "change-me", DEV_OTP: "true" }, "development");
   assert.deepEqual(result.errors, []);

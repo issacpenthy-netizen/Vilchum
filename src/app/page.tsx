@@ -5,12 +5,13 @@ import { ArrowLeft, ArrowRight, Banknote, Check, ChevronRight, CircleCheck, Coin
 import { messages } from "@/lib/i18n";
 import { pickup } from "@/config";
 import { MIN_CASHOUT, POINTS_PER_ITEM, cashoutQuote, usdLabel } from "@/lib/money";
+import { EstimatorUnavailableError, uploadImageForEstimate, type ScanEstimate } from "@/lib/estimate-client";
 
 type Screen = "welcome" | "phone" | "otp" | "home" | "profile" | "scan" | "verifying" | "result" | "wallet" | "payout" | "confirm" | "success";
 type Method = "ABA" | "ACLEDA" | "VISA";
 type ReceiptKind = "SCAN_VERIFIED" | "CASHOUT_REQUESTED" | "CASHOUT_PAID" | "CASHOUT_REFUNDED";
 type Receipt = { id: string; number: string; kind: ReceiptKind; amount: number; delta: number; balanceAfter: number; refId: string; details: Record<string, unknown>; createdAt: string };
-type Scan = { id: string; cans: number; bottles: number; estimatedPoints: number; kg: number; status: string };
+type Scan = ScanEstimate;
 type Activity = { id: string; kind: "SCAN" | "CASHOUT"; cans?: number; bottles?: number; estimatedPoints?: number; verifiedPoints?: number | null; verifiedCans?: number | null; verifiedBottles?: number | null; amount?: number; status: string; reason?: string | null; method?: string; createdAt: string; receipts: Receipt[] };
 type Payout = { id: string; amount: number; method: string; status: string };
 type PickupAddress = { recipientName: string; contactPhone: string; addressLine: string; khan: string; sangkat: string; landmark: string };
@@ -41,6 +42,8 @@ export default function App() {
   const [photo, setPhoto] = useState("");
   const [image, setImage] = useState<File | null>(null);
   const [result, setResult] = useState<Scan | null>(null);
+  const [estimatorBusy, setEstimatorBusy] = useState(false);
+  const [retakeOf, setRetakeOf] = useState<string | null>(null);
   const [verifier, setVerifier] = useState("");
   const [amountText, setAmountText] = useState("");
   const [method, setMethod] = useState<Method>("ABA");
@@ -197,14 +200,17 @@ export default function App() {
 
   async function submitScan() {
     if (!image) { setError("Take or choose a photo before submitting."); return; }
-    setBusy(true); setError(""); setScreen("verifying");
+    setBusy(true); setError(""); setEstimatorBusy(false); setScreen("verifying");
     try {
-      const form = new FormData(); form.set("image", image);
-      const response = await fetch("/api/scans", { method: "POST", body: form });
-      const data: { scan?: Scan; verifier?: string; error?: string } = await response.json();
-      if (!response.ok || !data.scan) throw new Error(data.error ?? "Photo verification failed. Try a clearer photo.");
-      setResult(data.scan); setVerifier(data.verifier ?? ""); await refresh(); setScreen("result");
-    } catch (cause) { setError(cause instanceof Error ? cause.message : "Photo verification failed. Please try another photo."); setScreen("scan"); }
+      const outcome = await uploadImageForEstimate(image, { replaces: retakeOf ?? undefined });
+      // "success" and "low_confidence" both save an estimate; the result screen shows the chip for the latter.
+      setResult(outcome.scan); setVerifier(outcome.verifier); setRetakeOf(null); await refresh(); setScreen("result");
+    } catch (cause) {
+      // Estimator offline/asleep/timeout: keep the photo so one tap retries it.
+      if (cause instanceof EstimatorUnavailableError) setEstimatorBusy(true);
+      else setError(cause instanceof Error ? cause.message : "Photo verification failed. Please try another photo.");
+      setScreen("scan");
+    }
     finally { setBusy(false); }
   }
 
@@ -258,7 +264,9 @@ export default function App() {
     }
   }
 
-  function resetPhoto() { if (photo) URL.revokeObjectURL(photo); setPhoto(""); setImage(null); setResult(null); setError(""); setScreen("scan"); }
+  function resetPhoto() { if (photo) URL.revokeObjectURL(photo); setPhoto(""); setImage(null); setResult(null); setError(""); setEstimatorBusy(false); setRetakeOf(null); setScreen("scan"); }
+  /** Low-confidence retake: the new photo replaces this estimate instead of adding a second one. */
+  function retakeForBetterEstimate() { const replaced = result?.id ?? null; resetPhoto(); setRetakeOf(replaced); window.setTimeout(() => cameraRef.current?.click(), 0); }
 
   return <main className="app-shell" lang={lang}>
     <div className="app-phone">
@@ -338,14 +346,14 @@ export default function App() {
         <div className={`camera-preview ${photo ? "photo-preview" : ""}`}>{photo ? <img src={photo} alt="Recycling items for verification"/> : <div className="camera-frame"><span className="corner top-left"/><span className="corner top-right"/><span className="corner bottom-left"/><span className="corner bottom-right"/><div className="frame-message"><span className="frame-icon"><Recycle size={29}/></span><strong>{t.cans} &amp; {t.bottles}</strong></div></div>}</div>
         <input ref={cameraRef} hidden type="file" accept="image/*" capture="environment" onChange={(event) => { const file = event.currentTarget.files?.[0]; event.currentTarget.value = ""; if (file) void preparePhoto(file); }}/><input ref={fileRef} hidden type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => { const file = event.currentTarget.files?.[0]; event.currentTarget.value = ""; if (file) void preparePhoto(file); }}/>
         {!photo ? <div className="scan-controls"><button className="button outline-button" disabled={busy} onClick={() => cameraRef.current?.click()}><ScanLine size={19}/>{busy ? "…" : t.camera}</button><button className="button outline-button" disabled={busy} onClick={() => fileRef.current?.click()}><ImagePlus size={19}/>{t.gallery}</button></div> : <div className="scan-controls"><button className="button outline-button" disabled={busy} onClick={() => { resetPhoto(); window.setTimeout(() => cameraRef.current?.click(), 0); }}>{t.retake}</button><button className="button gold-button" disabled={busy} onClick={() => void submitScan()}>{t.submit}<ArrowRight size={17}/></button></div>}
-        {error && <div className="error-message">{error}</div>}<p className="scan-limit-note">{t.dailyLimit}</p>
+        {estimatorBusy && <div className="busy-notice" role="status"><strong>{t.busyTitle}</strong><span>{t.busyText}</span><button className="button outline-button" disabled={busy} onClick={() => void submitScan()}>{t.tryAgainNow}</button></div>}{retakeOf && !estimatorBusy && <p className="estimate-note">{t.retakeReplaces}</p>}{error && <div className="error-message">{error}</div>}<p className="scan-limit-note">{t.dailyLimit}</p>
       </section>}
 
       {screen === "verifying" && <section className="status-screen"><span className="large-spinner"/><h1>{t.checking}</h1></section>}
 
-      {screen === "result" && result && <section className="result-content"><div className="result-check"><CircleCheck size={27}/></div><h1 className="page-title">{t.result}</h1><p className="page-subtitle">{t.resultSub}</p>
-        <div className="result-card"><div className="result-counts"><div><small>{t.cans}</small><strong>≈ {result.cans}</strong></div><div><small>{t.bottles}</small><strong>≈ {result.bottles}</strong></div></div><div className="result-line"><span>{t.weight}</span><strong>≈ {new Intl.NumberFormat("en-US", { maximumFractionDigits: 3 }).format(result.kg)} kg</strong></div><div className="result-line"><span>{t.rate}</span><strong>{POINTS_PER_ITEM.cans}៛ {t.perCan} · {POINTS_PER_ITEM.bottles}៛ {t.perBottle}</strong></div><div className="result-points"><span>{t.pointsEarned}</span><strong>≈ +{money(result.estimatedPoints)}៛</strong></div><p className="estimate-note">{t.notSpendable}</p></div>
-        {verifier === "MOCK" && <p className="mock-label">{t.verifierMock}</p>}{error && <div className="error-message">{error}</div>}<button className="button gold-button full-button" onClick={() => changeScreen("home")}>{t.claim}<ArrowRight size={18}/></button>
+      {screen === "result" && result && <section className="result-content"><div className="result-check"><CircleCheck size={27}/></div><h1 className="page-title">{t.result}</h1>{result.lowConfidence && <div className="confidence-chip" role="status"><span className="chip-dot"/>{t.lowConfidence}</div>}<p className="page-subtitle">{result.lowConfidence ? t.lowConfidenceHelp : t.resultSub}</p>
+        <div className="result-card"><div className="result-counts"><div><small>{t.cans}</small><strong>≈ {result.cans}</strong></div><div><small>{t.bottles}</small><strong>≈ {result.bottles}</strong></div></div><div className="result-line"><span>{t.weight}</span><strong>≈ {new Intl.NumberFormat("en-US", { maximumFractionDigits: 3 }).format(result.kg)} kg</strong></div><div className="result-line"><span>{t.rate}</span><strong>{POINTS_PER_ITEM.cans}៛ {t.perCan} · {POINTS_PER_ITEM.bottles}៛ {t.perBottle}</strong></div><div className="result-points"><span>{t.pointsEarned}</span><strong>≈ +{money(result.estimatedPoints)}៛</strong></div><p className="estimate-note">{t.notSpendable}</p>{result.glassBottles > 0 && <p className="estimate-note">{t.glassNotAccepted}</p>}</div>
+        {result.lowConfidence && <button className="button outline-button full-button" onClick={retakeForBetterEstimate}>{t.retakeBetter}</button>}{verifier === "MOCK" && <p className="mock-label">{t.verifierMock}</p>}{error && <div className="error-message">{error}</div>}<button className="button gold-button full-button" onClick={() => changeScreen("home")}>{t.claim}<ArrowRight size={18}/></button>
       </section>}
 
       {screen === "wallet" && <section className="wallet-content"><p className="eyebrow">{t.wallet}</p><h1 className="wallet-number">{money(balance)}<span> pts</span></h1><p className="wallet-sub">= {money(balance)}៛{usd(balance) && <> · {usd(balance)}</>} · 1 pt = 1៛ · {t.minimum} · {t.noFee}</p>{pendingEstimate > 0 && <p className="balance-pending wallet-pending">≈ +{money(pendingEstimate)}៛ {t.pendingPickup} · {t.notSpendable}</p>}

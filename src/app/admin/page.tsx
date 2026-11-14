@@ -4,7 +4,7 @@ import { useState } from "react";
 import { POINTS_PER_ITEM, verifiedPoints } from "@/lib/money";
 
 type Person = { phone: string | null; email: string | null };
-type AdminScan = { id: string; user: Person & { recipientName: string | null; contactPhone: string | null; addressLine: string | null; khan: string | null; sangkat: string | null; landmark: string | null }; cans: number; bottles: number; estimatedPoints: number; verifiedCans: number | null; verifiedBottles: number | null; verifiedPoints: number | null; status: string; reason: string | null; createdAt: string };
+type AdminScan = { id: string; user: Person & { recipientName: string | null; contactPhone: string | null; addressLine: string | null; khan: string | null; sangkat: string | null; landmark: string | null }; cans: number; bottles: number; estimatedPoints: number; lowConfidence: boolean; estimator: string | null; verifiedCans: number | null; verifiedBottles: number | null; verifiedPoints: number | null; status: string; reason: string | null; createdAt: string };
 type AdminPayout = { id: string; user: Person; amount: number; method: string; account: string; status: string; providerRef: string | null; createdAt: string };
 type AdminData = { scans: AdminScan[]; payouts: AdminPayout[] };
 type Pending =
@@ -93,7 +93,7 @@ export default function Admin() {
       {estimated.length === 0 && <p>No pickups waiting for a count.</p>}
       {estimated.map((scan) => <article className="admin-record" key={scan.id}>
         <div><strong>{scan.user.recipientName ?? who(scan.user)}</strong>
-          <span>Photo estimate: ≈ {scan.cans} cans · ≈ {scan.bottles} bottles · ≈ {money(scan.estimatedPoints)}៛</span>
+          <span>Photo estimate: ≈ {scan.cans} cans · ≈ {scan.bottles} bottles · ≈ {money(scan.estimatedPoints)}៛{scan.estimator ? ` · ${scan.estimator}` : ""}{scan.lowConfidence && <span className="admin-flag">Low confidence: count carefully</span>}</span>
           <span className="admin-address">{[scan.user.addressLine, scan.user.sangkat, scan.user.khan, scan.user.landmark].filter(Boolean).join(", ") || "No pickup address saved"}{scan.user.contactPhone ? ` · ${scan.user.contactPhone}` : ""}</span>
           <small>{new Date(scan.createdAt).toLocaleString()} · {who(scan.user)}</small></div>
         <div className="admin-verify">

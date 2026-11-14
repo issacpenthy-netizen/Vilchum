@@ -32,9 +32,15 @@ export function checkEnv(env: Env, mode: string | undefined): EnvCheck {
   if (!admin) weak("ADMIN_PASSWORD is not set, so /admin is unusable.");
   else if (PLACEHOLDER_SECRETS.has(admin) || admin.length < MIN_ADMIN_PASSWORD_LENGTH) weak(`ADMIN_PASSWORD is a default or shorter than ${MIN_ADMIN_PASSWORD_LENGTH} characters.`);
 
-  if (!env.GEMINI_API_KEY) {
-    if (production) errors.push("GEMINI_API_KEY is not set. Photo checking cannot run in production without it.");
-    else warnings.push("GEMINI_API_KEY is not set: photo checks use the labelled MOCK verifier (development only).");
+  const estimatorUrl = env.ESTIMATOR_URL;
+  if (estimatorUrl) {
+    let url: URL | null = null;
+    try { url = new URL(estimatorUrl); } catch { errors.push("ESTIMATOR_URL is not a valid URL."); }
+    if (url && production && (url.protocol !== "https:" || LOCAL_HOSTS.has(url.hostname))) errors.push("ESTIMATOR_URL must be the https Cloudflare Tunnel hostname in production, not localhost or http.");
+    if (!env.ESTIMATOR_API_KEY || env.ESTIMATOR_API_KEY.length < MIN_SECRET_LENGTH) errors.push(`ESTIMATOR_API_KEY must match the detection service's API_KEY (at least ${MIN_SECRET_LENGTH} characters).`);
+  } else if (!env.GEMINI_API_KEY) {
+    if (production) errors.push("Set ESTIMATOR_URL or GEMINI_API_KEY. Photo checking cannot run in production without one.");
+    else warnings.push("Neither ESTIMATOR_URL nor GEMINI_API_KEY is set: photo checks use the labelled MOCK verifier (development only).");
   }
 
   const redirect = env.GOOGLE_REDIRECT_URI;

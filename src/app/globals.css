@@ -55,3 +55,11 @@ button.activity-row:focus-visible{outline:2px solid var(--blue);outline-offset:2
 .admin-address{font-size:12px;color:var(--muted)}
 .admin-notice{padding:11px 13px;background:var(--mint);border-radius:11px}
 .refunded-amount{text-decoration:line-through}
+/* Estimator states: low-confidence chip and "server busy" retry notice. */
+.confidence-chip{display:inline-flex;align-items:center;gap:7px;margin:8px 0 2px;padding:6px 11px;border-radius:999px;background:#fff4e0;color:#7a4b00;font-size:12px;font-weight:600;letter-spacing:.01em}
+.chip-dot{width:7px;height:7px;border-radius:50%;background:#d98a00}
+.busy-notice{display:grid;gap:8px;margin-top:14px;padding:13px 14px;border:1px solid var(--line);border-radius:14px;background:var(--blue-soft);font-size:13px;line-height:1.5}
+.busy-notice span{color:var(--muted)}
+.busy-notice .button{justify-self:start;min-height:40px}
+.admin-flag{display:inline-block;margin-left:6px;padding:1px 7px;border-radius:999px;background:#fff4e0;color:#7a4b00;font-size:11px;font-weight:600}
+@media (prefers-color-scheme:dark){.confidence-chip,.admin-flag{background:#3a2c12;color:#f3c77a}}

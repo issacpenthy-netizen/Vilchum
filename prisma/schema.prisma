@@ -36,6 +36,8 @@ model Scan {
   cans            Int        // estimated from the photo
   bottles         Int        // estimated from the photo
   confidence      Float
+  lowConfidence   Boolean    @default(false) // estimator unsure: shown to the user and the driver
+  estimator       String?    // YOLO | GEMINI | MOCK
   estimatedPoints Int        @map("points")
   status          String     @default("ESTIMATED") // ESTIMATED | VERIFIED | REJECTED
   reason          String?
