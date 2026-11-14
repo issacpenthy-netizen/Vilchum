@@ -27,7 +27,7 @@ after(() => { globalThis.fetch = realFetch; });
 test("success: counts come from the summary and the key is sent server-side", async () => {
   respondWith(() => json(200, { status: "success", items: [{ label: "can", confidence: 0.93 }, { label: "bottle", confidence: 0.81 }], summary: { cans: 1, bottles: 1, overall_confidence: "high", min_confidence: 0.81, not_accepted: { glass_bottles: 2 } } }));
   const estimate = await estimatePhoto(photo);
-  assert.deepEqual(estimate, { cans: 1, bottles: 1, confidence: 0.81, lowConfidence: false, glassBottles: 2, source: "YOLO" });
+  assert.deepEqual(estimate, { cans: 1, bottles: 1, confidence: 0.81, lowConfidence: false, blurry: false, glassBottles: 2, source: "YOLO" });
   assert.equal(calls[0]!.url, "https://detect.vilchum.test/detect");
   assert.equal(calls[0]!.headers["X-API-Key"], process.env.ESTIMATOR_API_KEY);
 });
@@ -37,6 +37,13 @@ test("low_confidence is passed through for the UI chip", async () => {
   const estimate = await estimatePhoto(photo);
   assert.equal(estimate.lowConfidence, true);
   assert.equal(estimate.confidence, 0.41);
+});
+
+test("a blurry photo is reported as the reason for low confidence", async () => {
+  respondWith(() => json(200, { status: "low_confidence", items: [{ label: "can", confidence: 0.56 }], summary: { cans: 1, bottles: 0, overall_confidence: "low", min_confidence: 0.56, reasons: ["blurry"] } }));
+  const estimate = await estimatePhoto(photo);
+  assert.equal(estimate.lowConfidence, true);
+  assert.equal(estimate.blurry, true);
 });
 
 test("Cloudflare Access service token headers are sent when configured", async () => {

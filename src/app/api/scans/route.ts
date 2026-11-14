@@ -54,7 +54,7 @@ export async function POST(request: Request) {
     if (error instanceof EstimatorUnavailableError) return NextResponse.json({ error: "Photo checking is busy right now. Your photo is safe. Try again in a minute.", code: "ESTIMATOR_UNAVAILABLE" }, { status: 503, headers: { "Retry-After": "30" } });
     return NextResponse.json({ error: error instanceof Error ? error.message : "Photo verification failed. Try a clearer photo." }, { status: 422 });
   }
-  if (checked.cans + checked.bottles < 1) return NextResponse.json({ error: checked.glassBottles > 0 ? "Glass bottles aren’t accepted. Photograph aluminium cans and plastic bottles." : "No cans or plastic bottles were found. Try another photo." }, { status: 422 });
+  if (checked.cans + checked.bottles < 1) return NextResponse.json({ error: checked.blurry ? "Your photo is too blurry to count. Hold the phone steady and retake it." : checked.glassBottles > 0 ? "Glass bottles aren’t accepted. Photograph aluminium cans and plastic bottles." : "No cans or plastic bottles were found. Try another photo." }, { status: 422 });
   // Phase 1 only: the photo gives an unrounded estimate. It is stored on the scan and never
   // written to the ledger; a driver's count at pickup is what credits the balance.
   // A low-confidence estimate is still saved (it is never spendable) and flagged for the user and driver.
@@ -72,7 +72,7 @@ export async function POST(request: Request) {
       const record = await tx.scan.create({ data: { userId: user.id, imagePath, imageHash: hash, cans: checked.cans, bottles: checked.bottles, confidence: checked.confidence, lowConfidence: checked.lowConfidence, estimator: checked.source, estimatedPoints: estimated.points, status: "ESTIMATED" } });
       return record;
     });
-    return NextResponse.json({ scan: { id: scan.id, cans: scan.cans, bottles: scan.bottles, estimatedPoints: scan.estimatedPoints, kg: estimated.kg, status: scan.status, lowConfidence: scan.lowConfidence, glassBottles: checked.glassBottles }, verifier: checked.source });
+    return NextResponse.json({ scan: { id: scan.id, cans: scan.cans, bottles: scan.bottles, estimatedPoints: scan.estimatedPoints, kg: estimated.kg, status: scan.status, lowConfidence: scan.lowConfidence, blurry: checked.blurry, glassBottles: checked.glassBottles }, verifier: checked.source });
   } catch (error) {
     await unlink(imagePath).catch(() => {});
     if (error instanceof Error && error.message === "DAILY_LIMIT") return NextResponse.json({ error: "You’ve reached today’s 10 photo limit. Please try again tomorrow." }, { status: 429 });

@@ -10,6 +10,8 @@ export type ScanEstimate = {
   kg: number;
   status: string;
   lowConfidence: boolean;
+  /** Low confidence because the photo is blurry: tell the user to hold steady. */
+  blurry?: boolean;
   glassBottles: number;
 };
 

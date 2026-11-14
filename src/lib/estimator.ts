@@ -14,6 +14,8 @@ export type Estimate = {
   confidence: number;
   /** True when the estimator is unsure: the UI shows the low-confidence chip. */
   lowConfidence: boolean;
+  /** The photo itself is too blurry to trust (a reason for lowConfidence). */
+  blurry: boolean;
   /** Glass bottles seen but not accepted. */
   glassBottles: number;
   source: "YOLO" | "GEMINI" | "MOCK";
@@ -34,6 +36,7 @@ const detectSchema = z.object({
     bottles: z.number().int().min(0),
     overall_confidence: z.enum(["high", "low"]),
     min_confidence: z.number().min(0).max(1).nullable().optional(),
+    reasons: z.array(z.string().max(40)).max(10).optional(),
     not_accepted: z.object({ glass_bottles: z.number().int().min(0) }).partial().optional(),
   }),
 });
@@ -103,6 +106,7 @@ async function estimateWithYolo(jpeg: Buffer): Promise<Estimate> {
     bottles: summary.bottles,
     confidence: summary.min_confidence ?? (items.length ? Math.min(...items.map((item) => item.confidence)) : 1),
     lowConfidence: status === "low_confidence",
+    blurry: summary.reasons?.includes("blurry") ?? false,
     glassBottles: summary.not_accepted?.glass_bottles ?? 0,
     source: "YOLO",
   };
@@ -111,7 +115,7 @@ async function estimateWithYolo(jpeg: Buffer): Promise<Estimate> {
 async function estimateWithFallbackChecker(jpeg: Buffer): Promise<Estimate> {
   try {
     const { result, mode } = await verifyImage(jpeg, "image/jpeg");
-    return { cans: result.cans, bottles: result.bottles, confidence: result.confidence, lowConfidence: result.confidence < rules.confidenceThreshold, glassBottles: 0, source: mode };
+    return { cans: result.cans, bottles: result.bottles, confidence: result.confidence, lowConfidence: result.confidence < rules.confidenceThreshold, blurry: false, glassBottles: 0, source: mode };
   } catch (error) {
     // verifyImage already turns provider failures into user-facing messages.
     throw new PhotoRejectedError(error instanceof Error ? error.message : "Photo verification failed. Try a clearer photo.");
