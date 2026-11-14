@@ -1,0 +1,12 @@
+# VilChum detection service. Versions are the ones this service was tested with.
+#
+# PyTorch is NOT listed here on purpose: `pip install torch` from PyPI gives a CPU-only
+# build on Windows. Install the CUDA build FIRST (scripts/setup.ps1 does this):
+#   pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
+# RTX 50-series GPUs (e.g. RTX 5070, sm_120) need cu128 or newer; cu121 builds cannot run on them.
+fastapi==0.162.7
+uvicorn[standard]==0.54.0
+ultralytics==8.4.212
+opencv-python-headless==5.0.0.93
+python-multipart==0.0.33
+python-dotenv==1.2.4

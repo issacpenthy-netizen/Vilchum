@@ -1,0 +1,13 @@
+# Only needed for a locally-managed tunnel (README, "Option B").
+# Copy to C:\Windows\System32\config\systemprofile\.cloudflared\config.yml together with
+# the <TUNNEL-ID>.json credentials file, because the cloudflared Windows service runs as SYSTEM.
+tunnel: <TUNNEL-ID>
+credentials-file: C:\Windows\System32\config\systemprofile\.cloudflared\<TUNNEL-ID>.json
+
+ingress:
+  - hostname: detect.example.com
+    service: http://127.0.0.1:8000
+    originRequest:
+      connectTimeout: 10s
+  # Anything else gets a 404 at the edge and never reaches the PC.
+  - service: http_status:404

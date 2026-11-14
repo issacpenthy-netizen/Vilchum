@@ -1,0 +1,15 @@
+# Secrets
+.env
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Service logs (NSSM writes here)
+logs/
+
+# Local prediction output; never commit users' photos
+/runs/detect/predict*/
+/runs/detect/real_test*/
