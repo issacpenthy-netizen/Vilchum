@@ -41,7 +41,7 @@ from starlette.concurrency import run_in_threadpool  # noqa: E402
 log = logging.getLogger("vilchum.detect")
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"), format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
-SERVICE_VERSION = "1.0.0"
+SERVICE_VERSION = "1.1.0"
 
 
 def _float(name: str, default: float) -> float:
@@ -69,6 +69,9 @@ class Settings:
         self.detection_floor = _float("DETECTION_FLOOR", 0.25)
         self.low_confidence_threshold = _float("LOW_CONFIDENCE_THRESHOLD", 0.50)
         self.iou = _float("IOU_THRESHOLD", 0.5)
+        # Photos sharper than this are trusted; below it the result is "low_confidence" with reason
+        # "blurry", whatever the model says (blurry photos produce confident false cans).
+        self.blur_threshold = _float("BLUR_THRESHOLD", 16.0)
         self.image_size = _int("IMAGE_SIZE", 640)
         self.max_upload_bytes = _int("MAX_UPLOAD_BYTES", 12 * 1024 * 1024)
         self.max_queue = _int("MAX_QUEUE", 8)
@@ -86,6 +89,8 @@ class Settings:
                 problems.append(f"ALLOWED_ORIGINS entry is not https: {origin}")
         if not 0 < self.detection_floor <= self.low_confidence_threshold < 1:
             problems.append("Need 0 < DETECTION_FLOOR <= LOW_CONFIDENCE_THRESHOLD < 1.")
+        if self.blur_threshold < 0:
+            problems.append("BLUR_THRESHOLD must be 0 or more (0 disables the blur check).")
         if not os.path.isfile(self.model_path):
             problems.append(f"Model file not found at {os.path.abspath(self.model_path)}")
         if problems:
@@ -177,13 +182,44 @@ class Detector:
 detector = Detector()
 
 
-def summarize(items: list[dict[str, Any]], threshold: float, rejected: dict[str, int] | None = None) -> dict[str, Any]:
+def blur_score(image: np.ndarray) -> float:
+    """Sharpness of a photo: variance of the Laplacian after normalising size and contrast.
+
+    - Size is normalised (longest side 512 px) so phone resolution doesn't matter.
+    - A 1 px Gaussian pre-blur removes pixel noise and JPEG artefacts first; without it, the
+      contrast stretch below amplifies that noise in smooth photos until they look "sharp".
+    - Contrast is stretched (1st-99th percentile) so a dark but sharp photo isn't called blurry.
+
+    Calibration (sample photo after the app's resize/re-encode, plus synthetic traps):
+    sharp variants incl. very dark and low-contrast >= 24; blurred variants where the model invented
+    items <= 11; smooth blurred-noise images <= 11. Default threshold 16. Tune on real photos
+    using meta.blur_score.
+    """
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) if image.ndim == 3 else image
+    height, width = gray.shape[:2]
+    scale = 512 / max(height, width)
+    gray = cv2.resize(gray, (max(1, round(width * scale)), max(1, round(height * scale))), interpolation=cv2.INTER_AREA).astype(np.float64)
+    gray = cv2.GaussianBlur(gray, (0, 0), 1.0)
+    low, high = np.percentile(gray, 1), np.percentile(gray, 99)
+    if high - low < 1:
+        return 0.0  # a flat image has no detail at all
+    stretched = np.clip((gray - low) * 255.0 / (high - low), 0, 255)
+    return float(cv2.Laplacian(stretched, cv2.CV_64F).var())
+
+
+def summarize(items: list[dict[str, Any]], threshold: float, rejected: dict[str, int] | None = None, blurry: bool = False) -> dict[str, Any]:
     """Builds the public response. Pure function, unit-tested.
 
-    status is "low_confidence" when any accepted item is below the threshold. Zero items is
-    still "success" with zero counts; the caller decides how to tell the user nothing was found.
+    status is "low_confidence" when any accepted item is below the threshold OR the photo is
+    blurry. summary.reasons says which, so the app can tell the user what to fix. Zero items is
+    "success" with zero counts unless blurry; the caller decides how to say nothing was found.
     """
-    low = any(item["confidence"] < threshold for item in items)
+    reasons = []
+    if blurry:
+        reasons.append("blurry")
+    if any(item["confidence"] < threshold for item in items):
+        reasons.append("low_item_confidence")
+    low = bool(reasons)
     confidences = [item["confidence"] for item in items]
     return {
         "status": "low_confidence" if low else "success",
@@ -193,6 +229,7 @@ def summarize(items: list[dict[str, Any]], threshold: float, rejected: dict[str,
             "bottles": sum(1 for item in items if item["label"] == "bottle"),
             "overall_confidence": "low" if low else "high",
             "min_confidence": min(confidences) if confidences else None,
+            "reasons": reasons,
             "not_accepted": {"glass_bottles": (rejected or {}).get("glass_bottle", 0)},
         },
     }
@@ -275,6 +312,9 @@ async def detect(image: UploadFile = File(...)):
     height, width = decoded.shape[:2]
     if min(height, width) < 32:
         raise HTTPException(status_code=400, detail="image_too_small")
+    # Cheap CPU check, done before waiting for the GPU.
+    sharpness = await run_in_threadpool(blur_score, decoded)
+    blurry = settings.blur_threshold > 0 and sharpness < settings.blur_threshold
 
     # One GPU: run inferences one at a time and shed load instead of queueing forever.
     if detector.waiting >= settings.max_queue:
@@ -288,6 +328,7 @@ async def detect(image: UploadFile = File(...)):
     finally:
         detector.waiting -= 1
 
-    body = summarize(items, settings.low_confidence_threshold, rejected)
-    body["meta"] = {"inference_ms": elapsed_ms, "device": "cuda" if detector.gpu_active else "cpu", "version": SERVICE_VERSION}
+    body = summarize(items, settings.low_confidence_threshold, rejected, blurry)
+    body["meta"] = {"inference_ms": elapsed_ms, "device": "cuda" if detector.gpu_active else "cpu", "version": SERVICE_VERSION,
+                    "blur_score": round(sharpness, 1)}
     return body

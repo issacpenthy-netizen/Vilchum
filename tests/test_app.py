@@ -37,13 +37,50 @@ def test_summary_counts_and_bands():
     items = [{"label": "can", "confidence": 0.92}, {"label": "can", "confidence": 0.81}, {"label": "bottle", "confidence": 0.77}]
     body = service.summarize(items, 0.5, {"glass_bottle": 2})
     assert body["status"] == "success"
-    assert body["summary"] == {"cans": 2, "bottles": 1, "overall_confidence": "high", "min_confidence": 0.77, "not_accepted": {"glass_bottles": 2}}
+    assert body["summary"] == {"cans": 2, "bottles": 1, "overall_confidence": "high", "min_confidence": 0.77, "reasons": [], "not_accepted": {"glass_bottles": 2}}
 
 
 def test_any_item_below_threshold_is_low_confidence():
     body = service.summarize([{"label": "can", "confidence": 0.95}, {"label": "bottle", "confidence": 0.49}], 0.5)
     assert body["status"] == "low_confidence"
     assert body["summary"]["overall_confidence"] == "low"
+
+
+def test_blurry_photo_is_low_confidence_even_with_confident_items():
+    body = service.summarize([{"label": "can", "confidence": 0.56}], 0.5, blurry=True)
+    assert body["status"] == "low_confidence"
+    assert body["summary"]["reasons"] == ["blurry"]
+    both = service.summarize([{"label": "can", "confidence": 0.3}], 0.5, blurry=True)
+    assert both["summary"]["reasons"] == ["blurry", "low_item_confidence"]
+
+
+def reencode(image, quality=76):
+    """What the photo looks like after the app's JPEG re-encoding."""
+    ok, buffer = cv2.imencode(".jpg", image, [cv2.IMWRITE_JPEG_QUALITY, quality])
+    assert ok
+    return cv2.imdecode(buffer, cv2.IMREAD_COLOR)
+
+
+@pytest.mark.skipif(not PHOTO.exists(), reason="sample photo not present")
+def test_blur_score_separates_sharp_from_blurry_regardless_of_brightness():
+    photo = cv2.imread(str(PHOTO))
+    threshold = service.settings.blur_threshold
+    assert service.blur_score(reencode(photo)) > threshold * 1.4
+    dark = reencode((photo * 0.10).astype(np.uint8))  # sharp but very dark
+    assert service.blur_score(dark) > threshold, "a dark but sharp photo must not count as blurry"
+    for sigma in (8, 14, 26):
+        assert service.blur_score(reencode(cv2.GaussianBlur(photo, (0, 0), sigma))) < threshold
+    assert service.blur_score(np.full((200, 200, 3), 128, dtype=np.uint8)) == 0.0
+
+
+def test_smooth_low_contrast_noise_is_not_mistaken_for_sharp():
+    # Heavily blurred noise is very low contrast; stretching it used to amplify JPEG artefacts
+    # into fake "detail" (score ~300, while the model called it a confident bottle).
+    rng = np.random.default_rng(7)
+    for size, sigma in ((80, 25), (40, 15), (120, 40)):
+        noise = rng.integers(0, 256, (round(size * 0.75), size, 3), dtype=np.uint8)
+        smooth = cv2.GaussianBlur(cv2.resize(noise, (1000, 750), interpolation=cv2.INTER_LINEAR), (0, 0), sigma)
+        assert service.blur_score(reencode(smooth)) < service.settings.blur_threshold
 
 
 def test_no_items_is_success_with_zero_counts():
@@ -103,12 +140,27 @@ def test_oversized_upload_is_rejected(client):
     assert response.status_code == 413
 
 
-def test_blank_image_finds_nothing(client):
+def test_blank_image_finds_nothing_and_is_flagged(client):
     response = client.post("/detect", headers={"X-API-Key": KEY}, files={"image": ("a.jpg", jpeg(), "image/jpeg")})
     assert response.status_code == 200
     body = response.json()
-    assert body["status"] == "success" and body["items"] == []
+    assert body["items"] == []
     assert body["summary"]["cans"] == 0 and body["summary"]["bottles"] == 0
+    # A flat grey image has no detail at all, so it is treated as blurry.
+    assert body["status"] == "low_confidence" and body["summary"]["reasons"] == ["blurry"]
+    assert body["meta"]["blur_score"] == 0.0
+
+
+@pytest.mark.skipif(not PHOTO.exists(), reason="sample photo not present")
+def test_blurry_real_photo_is_flagged_low_confidence(client):
+    photo = cv2.imread(str(PHOTO))
+    blurred = cv2.GaussianBlur(cv2.rotate(photo, cv2.ROTATE_90_CLOCKWISE), (0, 0), 20)
+    ok, buffer = cv2.imencode(".jpg", blurred)
+    response = client.post("/detect", headers={"X-API-Key": KEY}, files={"image": ("b.jpg", buffer.tobytes(), "image/jpeg")})
+    body = response.json()
+    assert body["status"] == "low_confidence"
+    assert "blurry" in body["summary"]["reasons"]
+    assert body["meta"]["blur_score"] < service.settings.blur_threshold
 
 
 @pytest.mark.skipif(not PHOTO.exists(), reason="sample photo not present")
@@ -118,8 +170,10 @@ def test_real_photo_counts_one_plastic_bottle(client):
     body = response.json()
     assert body["status"] == "success"
     assert body["summary"]["bottles"] == 1 and body["summary"]["cans"] == 0
+    assert body["summary"]["reasons"] == []
     assert body["items"][0]["label"] == "bottle" and body["items"][0]["confidence"] >= 0.5
     assert body["meta"]["device"] in {"cuda", "cpu"}
+    assert body["meta"]["blur_score"] > service.settings.blur_threshold
 
 
 @pytest.mark.skipif(not PHOTO.exists(), reason="sample photo not present")

@@ -92,7 +92,7 @@ running 10-50x slower.
 `GET /health`: no key needed. Returns 200 when ready and 503 when the model failed to load:
 
 ```json
-{"status": "ok", "gpu_active": true, "model_loaded": true, "device": "cuda", "version": "1.0.0"}
+{"status": "ok", "gpu_active": true, "model_loaded": true, "device": "cuda", "version": "1.1.0"}
 ```
 
 `POST /detect`: header `X-API-Key: <API_KEY>`, `multipart/form-data` with field `image`
@@ -103,15 +103,27 @@ running 10-50x slower.
   "status": "success",
   "items": [{"label": "can", "confidence": 0.92}, {"label": "bottle", "confidence": 0.81}],
   "summary": {"cans": 1, "bottles": 1, "overall_confidence": "high", "min_confidence": 0.81,
-              "not_accepted": {"glass_bottles": 0}},
-  "meta": {"inference_ms": 18, "device": "cuda", "version": "1.0.0"}
+              "reasons": [], "not_accepted": {"glass_bottles": 0}},
+  "meta": {"inference_ms": 18, "device": "cuda", "version": "1.1.0", "blur_score": 65.4}
 }
 ```
 
 - `status` is `low_confidence` (and `overall_confidence` is `low`) when **any** accepted item
   scores below `LOW_CONFIDENCE_THRESHOLD` (0.50). Detections below `DETECTION_FLOOR` (0.25) are
   dropped.
-- Zero items is still `success` with zero counts.
+- **Blurry photos** are always `low_confidence`, whatever the model says. On blurry photos the model
+  reports confident false cans (0.52-0.56 on a photo of one bottle) and false glass. The photo's
+  sharpness is checked first: size and contrast are normalised, so dark but sharp photos are not
+  flagged. Any score below `BLUR_THRESHOLD` (16) is flagged.
+- `summary.reasons` explains a `low_confidence` result: `blurry`, `low_item_confidence`, or both.
+  The app uses it to tell the user what to fix.
+- `meta.blur_score` is returned with every result, so the threshold can be tuned on real photos.
+  Calibration so far comes from one sample photo after the app's own resizing and re-compression,
+  plus synthetic tests. Sharp versions scored 24 or more, including very dark and low-contrast
+  ones. Blurred versions where the model went wrong, and smooth low-contrast blobs, scored 11 or
+  less. The margins are narrow (about 1.5x), so collect real `blur_score` values in the beta and
+  re-tune.
+- Zero items is `success` with zero counts, unless the photo is blurry.
 - `not_accepted.glass_bottles` lets the app say "glass isn't accepted" instead of silently
   undercounting.
 
