@@ -1,9 +1,10 @@
 import { cookies } from "next/headers";
 import { createHmac } from "node:crypto";
 import { db } from "@/lib/db";
+import { sessionSecret } from "@/lib/env";
 
-const secret = process.env.SESSION_SECRET ?? "vilchum-local-session-secret-change-before-deploy";
-export function sign(id: string) { return `${id}.${createHmac("sha256", secret).update(id).digest("hex")}`; }
+// No built-in fallback: without SESSION_SECRET signing fails instead of using a secret anyone can read in the repo.
+export function sign(id: string) { return `${id}.${createHmac("sha256", sessionSecret()).update(id).digest("hex")}`; }
 export function verify(token: string | undefined) {
   if (!token) return null;
   const [id, signature] = token.split(".");

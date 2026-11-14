@@ -7,7 +7,11 @@
     "build": "prisma generate && next build",
     "start": "next start",
     "postinstall": "prisma generate",
-    "db:seed": "node prisma/seed.cjs"
+    "db:seed": "node prisma/seed.cjs",
+    "test": "node --import tsx --test \"src/**/*.test.ts\"",
+    "build:postgres": "prisma generate --schema prisma/postgres/schema.prisma && next build",
+    "db:postgres:sync": "node scripts/sync-postgres-schema.mjs",
+    "db:postgres:deploy": "prisma migrate deploy --schema prisma/postgres/schema.prisma"
   },
   "prisma": {
     "seed": "node prisma/seed.cjs"
@@ -15,7 +19,7 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",
     "@google/genai": "^3.0.0",
-    "@prisma/client": "^6.3.1",
+    "@prisma/client": "6.12.0",
     "lucide-react": "^0.468.0",
     "next": "^15.1.6",
     "sharp": "^0.33.5",
@@ -27,13 +31,13 @@
     "@types/react-dom": "^19.0.3",
     "autoprefixer": "^10.4.20",
     "postcss": "^8.5.1",
-    "prisma": "^6.3.1",
+    "prisma": "6.12.0",
     "tailwindcss": "^3.4.17",
     "tsx": "^4.19.2",
     "typescript": "^5.7.3"
   },
   "allowScripts": {
-    "@prisma/client@6.19.3": true,
+    "@prisma/client@6.12.0": true,
     "prisma@6.12.0": true,
     "sharp@0.35.5": true,
     "sharp@0.33.5": true,

@@ -7,3 +7,17 @@ build/
 .vscode/
 .idea/
 .DS_Store
+
+# Local data: never commit databases or user photos (they hold personal data).
+prisma/*.db
+prisma/*.db-journal
+uploads/
+
+# Local test output
+.playwright-mcp/
+
+# Build caches
+*.tsbuildinfo
+
+# Local worktrees of other branches (e.g. obj-recognition)
+.worktrees/
