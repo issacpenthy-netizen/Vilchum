@@ -19,11 +19,45 @@ When `ESTIMATOR_URL` is set, photo estimates come from the YOLO service on the `
 
 Local test: run the service (`uvicorn app:app --port 8000` on that branch), then set `ESTIMATOR_URL=http://127.0.0.1:8000` and `ESTIMATOR_API_KEY` to the service's `API_KEY`.
 
+## Production database (Postgres)
+
+Local development uses SQLite (`prisma/schema.prisma`, `prisma/migrations`). Production must use
+Postgres, and the server refuses to start in production with any other `DATABASE_URL`.
+
+- **Schema:** `prisma/postgres/schema.prisma` is generated from the SQLite schema (`npm run db:postgres:sync`). `npm test` fails if the two drift apart.
+- **Migrations:** `prisma/postgres/migrations` (the baseline `…_init` creates all tables).
+- **Money safety:** cash-outs run as SERIALIZABLE transactions with retry. On Postgres' default isolation, two simultaneous cash-outs could otherwise both pass the balance check.
+
+**First deployment**
+
+1. Create a Postgres database. A Singapore region is closest to Phnom Penh.
+2. Apply the migrations using the direct (non-pooled) connection URL:
+   ```bash
+   DATABASE_URL="postgresql://USER:PASSWORD@HOST/DB?sslmode=require" npm run db:postgres:deploy
+   ```
+3. Set `DATABASE_URL` in the hosting provider. With a pooled or pgbouncer URL, add `&pgbouncer=true`.
+4. Use `npm run build:postgres` as the build command (it generates the Postgres client).
+5. Do **not** seed production: `prisma/seed.cjs` creates a demo account. Start with an empty database; the local SQLite data is test data.
+
+**Changing models later**
+
+1. Edit `prisma/schema.prisma`, then `npx prisma migrate dev --name <change>` (SQLite).
+2. `npm run db:postgres:sync`
+3. Create the matching Postgres migration against a throwaway local Postgres:
+   ```bash
+   npx prisma dev --detach --name vilchum-migrate
+   DATABASE_URL="<URL printed by prisma dev>" npx prisma migrate dev --schema prisma/postgres/schema.prisma --name <change>
+   npx prisma dev rm vilchum-migrate
+   ```
+4. Run `npx prisma generate` afterwards to switch your local client back to SQLite.
+
+**Local SQLite note:** saving a scan sometimes waited 3-15 s for the SQLite file lock on Windows, which exceeded Prisma's 5 s transaction limit (HTTP 500). `src/lib/db.ts` raises the limits to 10 s wait and 20 s run as a local band-aid.
+
 ## Configuration checks
 
 The server checks its configuration when it starts (`src/instrumentation.ts`, rules in `src/lib/env.ts`).
 
-- **Production** (`next start`) refuses to start if `DEV_OTP=true`, `SESSION_SECRET` is missing, a placeholder, or under 32 characters, `ADMIN_PASSWORD` is missing, a default, or under 16 characters, `DATABASE_URL` is missing, neither `ESTIMATOR_URL` nor `GEMINI_API_KEY` is set, `ESTIMATOR_URL` is not https or has no 32+ character `ESTIMATOR_API_KEY`, or `GOOGLE_REDIRECT_URI` is not an https public URL.
+- **Production** (`next start`) refuses to start if `DEV_OTP=true`, `SESSION_SECRET` is missing, a placeholder, or under 32 characters, `ADMIN_PASSWORD` is missing, a default, or under 16 characters, `DATABASE_URL` is missing or not Postgres, neither `ESTIMATOR_URL` nor `GEMINI_API_KEY` is set, `ESTIMATOR_URL` is not https or has no 32+ character `ESTIMATOR_API_KEY`, or `GOOGLE_REDIRECT_URI` is not an https public URL.
 - **Development** prints the same problems as warnings so local demos keep working, but still needs `SESSION_SECRET` and `DATABASE_URL`.
 - There is no built-in session secret and the demo sign-in code is ignored in production, even if the startup check were bypassed.
 

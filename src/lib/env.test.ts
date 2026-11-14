@@ -13,6 +13,14 @@ test("a complete production config passes", () => {
   assert.deepEqual(checkEnv(strong, "production"), { errors: [], warnings: [] });
 });
 
+test("production refuses SQLite", () => {
+  for (const DATABASE_URL of ["file:./dev.db", "file:/var/data/prod.db", "mysql://db/vilchum"]) {
+    assert.ok(checkEnv({ ...strong, DATABASE_URL }, "production").errors.some((message) => message.includes("Postgres")), `expected an error for ${DATABASE_URL}`);
+  }
+  assert.deepEqual(checkEnv({ ...strong, DATABASE_URL: "postgres://u:p@db.example.com/vilchum" }, "production").errors, []);
+  assert.deepEqual(checkEnv({ ...strong, DATABASE_URL: "file:./dev.db" }, "development").errors, []);
+});
+
 test("production refuses the demo sign-in code", () => {
   const { errors } = checkEnv({ ...strong, DEV_OTP: "true" }, "production");
   assert.ok(errors.some((message) => message.includes("DEV_OTP")));

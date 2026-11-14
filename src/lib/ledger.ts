@@ -1,7 +1,32 @@
-import type { Prisma } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 
 export type ReceiptKind = "SCAN_VERIFIED" | "CASHOUT_REQUESTED" | "CASHOUT_PAID" | "CASHOUT_REFUNDED";
 type Tx = Prisma.TransactionClient;
+
+/** Postgres aborts one of two conflicting serializable transactions; Prisma reports it as P2034. */
+export function isSerializationFailure(error: unknown) {
+  if (typeof error !== "object" || error === null) return false;
+  const code = "code" in error ? (error as { code?: unknown }).code : undefined;
+  const message = error instanceof Error ? error.message : "";
+  return code === "P2034" || /could not serialize|40001|write conflict|deadlock/i.test(message);
+}
+
+/**
+ * Runs a read-then-write money transaction (e.g. "check balance, then debit") at SERIALIZABLE
+ * isolation, retrying when the database aborts it because of a concurrent conflict.
+ * On Postgres' default READ COMMITTED, two simultaneous cash-outs could both see the same
+ * balance and both debit it. SQLite already serialises writes, so this is a no-op there.
+ */
+export async function serializableMoneyTransaction<T>(run: (options: { isolationLevel: Prisma.TransactionIsolationLevel }) => Promise<T>, attempts = 3): Promise<T> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await run({ isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+    } catch (error) {
+      if (attempt >= attempts || !isSerializationFailure(error)) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 25 * attempt + Math.random() * 25));
+    }
+  }
+}
 
 /** Spendable balance: only ledger entries count. Estimated scans never reach the ledger. */
 export async function balanceOf(tx: Tx, userId: string) {

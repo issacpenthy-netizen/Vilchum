@@ -3,7 +3,7 @@ import { z } from "zod";
 import { db } from "@/lib/db";
 import { currentUser } from "@/lib/auth";
 import { MIN_CASHOUT, cashoutQuote } from "@/lib/money";
-import { balanceOf, publicReceipt, recordTransition } from "@/lib/ledger";
+import { balanceOf, publicReceipt, recordTransition, serializableMoneyTransaction } from "@/lib/ledger";
 
 // D3: the cash-out rail is stubbed in v1. A confirmed request debits the balance and issues a
 // receipt; the VilChum team pays it manually and marks it PAID (or FAILED, which refunds) in /admin.
@@ -29,7 +29,9 @@ export async function POST(request: Request) {
   if (!parsed.success) return NextResponse.json({ error: parsed.error.issues[0]?.message ?? "Check the payout details and try again." }, { status: 400 });
   const { amount, method, account } = parsed.data;
   const quote = cashoutQuote(amount);
-  const result = await db.$transaction(async (tx) => {
+  // Check-balance-then-debit must be serializable, or two simultaneous cash-outs on Postgres can
+  // both pass the balance check and spend the same riel twice.
+  const result = await serializableMoneyTransaction((options) => db.$transaction(async (tx) => {
     if (amount > await balanceOf(tx, user.id)) return null;
     const payout = await tx.payout.create({ data: { userId: user.id, amount, method, account, status: "REQUESTED" } });
     const receipt = await recordTransition(tx, {
@@ -37,7 +39,7 @@ export async function POST(request: Request) {
       details: { method, accountLast4: account.replace(/\s/g, "").slice(-4), fee: quote.fee, receive: quote.receive, status: "REQUESTED" },
     });
     return { payout, receipt };
-  });
+  }, options));
   if (!result) return NextResponse.json({ error: "Your balance is too low for that amount. Choose a smaller amount." }, { status: 400 });
   return NextResponse.json({
     payout: { id: result.payout.id, amount: result.payout.amount, method: result.payout.method, status: result.payout.status },

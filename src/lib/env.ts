@@ -18,6 +18,8 @@ export function checkEnv(env: Env, mode: string | undefined): EnvCheck {
   const weak = (message: string) => (production ? errors : warnings).push(message);
 
   if (!env.DATABASE_URL) errors.push("DATABASE_URL is not set.");
+  // SQLite is a single local file: no backups, no concurrency, gone on redeploy. Never in production.
+  else if (production && !/^postgres(ql)?:\/\//.test(env.DATABASE_URL)) errors.push("DATABASE_URL must be a Postgres URL (postgresql://...) in production. SQLite is for local development only.");
 
   const secret = env.SESSION_SECRET;
   if (!secret) errors.push("SESSION_SECRET is not set. Generate one with: openssl rand -hex 32");
